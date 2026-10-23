@@ -1519,6 +1519,32 @@ mod tests {
         assert!(editor.methods().is_empty());
     }
 
+    /// A dangling link has no canonical path, so the containment check must
+    /// not treat it as a not-yet-created file inside the roots: writing
+    /// through it would create its outside target.
+    #[cfg(unix)]
+    #[test]
+    fn a_dangling_symlink_cannot_lead_out_of_the_roots() {
+        let dir = workspace("dangling");
+        let target = dir.join("outside/planted.txt");
+        std::os::unix::fs::symlink(&target, dir.join("ws/dangling")).unwrap();
+        std::os::unix::fs::symlink(dir.join("outside/nodir"), dir.join("ws/dlink")).unwrap();
+        let editor = Editor::new(&[]);
+        let ctx = context(&dir, "default");
+        for path in ["dangling", "dlink/new.txt"] {
+            let error = run(
+                &editor,
+                &ctx,
+                "write_text_file",
+                &format!("{{\"path\":{},\"content\":\"x\"}}", esc(path)),
+            )
+            .unwrap_err();
+            assert!(error.contains("outside"), "{path}: {error}");
+        }
+        assert!(editor.methods().is_empty());
+        assert!(!target.exists());
+    }
+
     #[test]
     fn write_creates_a_file_in_a_new_folder_and_shows_a_diff() {
         let dir = workspace("create");

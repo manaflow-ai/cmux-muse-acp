@@ -353,6 +353,30 @@ mod tests {
         assert_eq!(effective_outcome(&high_authorized), Outcome::Allow);
     }
 
+    /// Auto-review may answer one approval, but it must never create a
+    /// standing rule: a host that offers only session or local-persistent
+    /// approving choices gets a deny, not a durable grant.
+    #[test]
+    fn auto_review_never_picks_a_durable_grant() {
+        let choice = |id: &str, decision: &str, scope: &str| crate::acp::PermChoice {
+            id: id.to_string(),
+            decision: decision.to_string(),
+            scope: scope.to_string(),
+            accepts_feedback: false,
+        };
+        let durable_only = vec![
+            choice("c-session", "approvedForSession", "session"),
+            choice("c-local", "approved", "localPersistent"),
+            choice("c-deny", "denied", "once"),
+        ];
+        assert_eq!(allow_choice(&durable_only), None);
+        let mixed = vec![
+            choice("c-session", "approvedForSession", "session"),
+            choice("c-once", "approved", "once"),
+        ];
+        assert_eq!(allow_choice(&mixed), Some("c-once".to_string()));
+    }
+
     #[test]
     fn review_timeout_defaults_to_the_codex_timeout() {
         assert_eq!(REVIEW_TIMEOUT, Duration::from_secs(90));
