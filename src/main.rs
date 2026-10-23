@@ -6527,7 +6527,10 @@ fn handle_acp(
             {
                 let mut map = sessions.lock().unwrap_or_else(|p| p.into_inner());
                 if let Some(s) = map.get_mut(&sid) {
-                    remember_review_line(&mut s.review_context, format!("user: {acp_content}"));
+                    remember_review_line(
+                        &mut s.review_context,
+                        format!("user: {}", reviewer::trusted_prompt_text(&acp_content)),
+                    );
                 }
             }
             // `/goal ...`, `/rename ...`, and `/workflow-child ...` are
@@ -12866,7 +12869,7 @@ fn approval_title_kind(params: &J) -> (String, &'static str) {
         "tool" => fold::tool_kind(tool_name),
         _ => "other",
     };
-    (title, kind)
+    (acp::visible_title(&title), kind)
 }
 
 /// Remove one native-review activity row and publish the new state.
