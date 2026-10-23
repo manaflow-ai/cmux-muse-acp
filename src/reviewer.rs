@@ -256,16 +256,13 @@ pub fn effective_outcome(assessment: &Assessment) -> Outcome {
     }
 }
 
-/// The choice to send for an allow: prefer a once-scoped approving choice,
-/// then any approving choice the host offers. A deny always uses the host's
-/// own reject-style choice.
+/// The choice to send for an allow: only a once-scoped approving choice.
+/// A session or local-persistent grant would let later matching actions run
+/// without any review, so when the host offers no once-scoped approval the
+/// caller denies instead. A deny always uses the host's own reject-style
+/// choice.
 pub fn allow_choice(choices: &[crate::acp::PermChoice]) -> Option<String> {
-    crate::acp::approve_once_choice(choices).or_else(|| {
-        choices
-            .iter()
-            .find(|choice| choice.decision.to_lowercase().starts_with("approv"))
-            .map(|choice| choice.id.clone())
-    })
+    crate::acp::approve_once_choice(choices)
 }
 
 pub fn deny_choice(choices: &[crate::acp::PermChoice]) -> Option<String> {

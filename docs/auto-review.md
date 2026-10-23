@@ -43,8 +43,10 @@ medium or high authorization; low and medium allow.
 
 ## Decisions
 
-- Allow: the adapter answers with a once-scoped allowing choice when the host
-  offers one, otherwise the first allowing choice.
+- Allow: the adapter answers with a once-scoped allowing choice. It never
+  picks a session or local-persistent choice, because that would create a
+  standing rule that skips review for later actions. When the host offers no
+  once-scoped allowing choice, the adapter denies instead.
 - Deny: the adapter answers with the host's reject choice, shows
   `Permission denied by Auto-review: <rationale>` in the editor transcript,
   and passes the rationale as feedback when the host accepts feedback.

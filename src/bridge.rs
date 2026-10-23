@@ -1317,6 +1317,15 @@ fn resolve_path(raw: &str, cwd: &str, roots: &[String]) -> Result<String, String
         match std::fs::canonicalize(existing) {
             Ok(canonical) => break canonical,
             Err(_) => {
+                // An entry that exists but has no canonical path is a
+                // dangling link (or one we cannot read). Following it could
+                // create its target outside the roots, so refuse it.
+                if std::fs::symlink_metadata(existing).is_ok() {
+                    return Err(format!(
+                        "{} is outside the session's workspace roots (it goes through a link that cannot be resolved)",
+                        lexical.display()
+                    ));
+                }
                 let (Some(name), Some(parent)) = (existing.file_name(), existing.parent()) else {
                     return Err(format!("cannot resolve {}", lexical.display()));
                 };
