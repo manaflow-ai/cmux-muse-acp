@@ -804,6 +804,15 @@ fn write_atomic(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
             Err(e) => return Err(e),
         }
     }
+    // Keep the original file's permissions: a settings file the user made
+    // private (it can hold agent env values such as tokens) must not come
+    // back world-readable with the default umask.
+    if let Ok(metadata) = std::fs::metadata(path)
+        && let Err(e) = std::fs::set_permissions(&tmp, metadata.permissions())
+    {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(e);
+    }
     match std::fs::rename(&tmp, path) {
         Ok(()) => Ok(()),
         Err(e) => {
@@ -1131,6 +1140,19 @@ mod tests {
             leftovers.is_empty(),
             "atomic write leaked temp files: {leftovers:?}"
         );
+        let _ = std::fs::remove_dir_all(path.parent().unwrap());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_keeps_a_private_file_private() {
+        use std::os::unix::fs::PermissionsExt;
+        let path = temp_settings_path("private");
+        std::fs::write(&path, "{}").expect("seed settings");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        write_atomic(&path, "{\"a\":1}\n").expect("atomic write");
+        let mode = std::fs::metadata(&path).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
         let _ = std::fs::remove_dir_all(path.parent().unwrap());
     }
 
