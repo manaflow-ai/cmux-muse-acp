@@ -370,7 +370,7 @@ fn serve_connection(stream: TcpStream, shared: &Shared) {
     let mut reader = BufReader::new(read_half);
     let mut writer = stream;
     loop {
-        let request = match read_request(&mut reader) {
+        let request = match read_request_admitting(&mut reader, &admitted) {
             Ok(request) => request,
             Err(ReadError::Closed) => return,
             Err(ReadError::Bad(status, _)) => {
@@ -413,7 +413,41 @@ fn read_line(reader: &mut impl BufRead, budget: &mut usize) -> Result<Option<Str
         .map_err(|_| ReadError::Bad(400, "request head is not UTF-8"))
 }
 
+/// Whether a request head may have its body read: no browser `Origin` and a
+/// bearer token of an open session. `route` applies the same checks to
+/// answer; this one only keeps an unauthenticated peer from making the
+/// adapter buffer a body of up to `MAX_BODY_BYTES`.
+fn admitted(headers: &[(String, String)]) -> bool {
+    let header = |name: &str| {
+        headers
+            .iter()
+            .find(|(key, _)| key == name)
+            .map(|(_, value)| value.as_str())
+    };
+    header("origin").is_none()
+        && header("authorization")
+            .and_then(|value| {
+                let (scheme, token) = value.split_once(' ')?;
+                scheme.eq_ignore_ascii_case("bearer").then(|| token.trim())
+            })
+            .is_some_and(|token| lock(&TOKENS).contains_key(token))
+}
+
+#[cfg(test)]
 fn read_request(reader: &mut impl BufRead) -> Result<Request, ReadError> {
+    read_request_admitting(reader, &|_| true)
+}
+
+/// Decides from a request head's lowercased headers whether to read its body.
+type Admit<'a> = dyn Fn(&[(String, String)]) -> bool + 'a;
+
+/// Read one request. A head that `admit` refuses gets no body read: the
+/// request comes back with an empty body and `close` set, so `route` answers
+/// it from its headers and the connection ends.
+fn read_request_admitting(
+    reader: &mut impl BufRead,
+    admit: &Admit<'_>,
+) -> Result<Request, ReadError> {
     let mut budget = MAX_HEAD_BYTES;
     // A blank line before the request line is allowed (RFC 9112 2.2).
     let request_line = loop {
@@ -464,6 +498,10 @@ fn read_request(reader: &mut impl BufRead) -> Result<Request, ReadError> {
     } else {
         connection.contains("close")
     };
+    if !admit(&request.headers) {
+        request.close = true;
+        return Ok(request);
+    }
     let chunked = request
         .header("transfer-encoding")
         .is_some_and(|te| te.to_ascii_lowercase().contains("chunked"));
@@ -1779,6 +1817,25 @@ mod tests {
             MAX_BODY_BYTES + 1
         );
         assert!(matches!(request(&big), Err(ReadError::Bad(413, _))));
+    }
+
+    #[test]
+    fn an_unauthenticated_head_gets_no_body_read() {
+        let raw = format!("POST /mcp HTTP/1.1\r\nContent-Length: {}\r\n\r\nabcd", 4);
+        let r = read_request_admitting(&mut BufReader::new(raw.as_bytes()), &|_| false).unwrap();
+        assert!(r.body.is_empty());
+        assert!(r.close);
+        assert!(!admitted(&[(
+            "authorization".to_string(),
+            "Bearer not-a-session-token".to_string()
+        )]));
+        let token = session_token(Some("admit-test-session"));
+        let bearer = ("authorization".to_string(), format!("Bearer {token}"));
+        assert!(admitted(std::slice::from_ref(&bearer)));
+        assert!(!admitted(&[
+            bearer,
+            ("origin".to_string(), "https://evil.example".to_string())
+        ]));
     }
 
     fn http(method: &str, target: &str, headers: &[(&str, &str)], body: &str) -> Request {
